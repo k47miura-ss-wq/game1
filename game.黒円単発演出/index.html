@@ -48,9 +48,9 @@
             display: block;
         }
 
-        /* 部屋画像のパスを images/ に統一 */
-        #room-north { background-image: url('images/room_north.png'); }
-        #room-east { background-image: url('images/room_east.png'); }
+        /* 部屋画像のパス */
+        #room-north, #room-tutorial_north { background-image: url('images/room_north.png'); }
+        #room-east, #room-tutorial_east { background-image: url('images/room_east.png'); }
         #room-south { background-image: url('images/room_south.png'); }
         #room-west { background-image: url('images/room_west.png'); }
 
@@ -133,19 +133,6 @@
             max-height: 100%;
         }
 
-        .item-get-animation {
-            position: absolute;
-            animation: itemGet 0.8s ease-out forwards;
-            pointer-events: none;
-            z-index: 20;
-        }
-
-        @keyframes itemGet {
-            0% { transform: scale(1) translate(0, 0); opacity: 1; }
-            50% { transform: scale(1.2) translate(0, -50px); opacity: 0.8; }
-            100% { transform: scale(0.5) translate(var(--target-x, 0), var(--target-y, 0)); opacity: 0; }
-        }
-
         #end-screen {
             position: absolute;
             top: 0;
@@ -185,18 +172,45 @@
         }
 
         /* ホットスポットのデザイン */
-        #hotspot-safe {
+        /* 本編の金庫（開閉どちらも同じ位置・サイズを維持） */
+        #hotspot-safe, #hotspot-safe.opened {
             top: 140px !important;    
             left: 550px !important;   
             width: 100px !important;  
             height: 120px !important; 
-            background-image: url('images/safe.png') !important; 
             background-size: 100% 100% !important;
             background-color: transparent !important;
             border: none !important;
             position: absolute;
             z-index: 7 !important;
         }
+        #hotspot-safe {
+            background-image: url('images/safe.png') !important;
+        }
+
+        /* チュートリアルの金庫（位置に変化を与えない） */
+        #hotspot-tutorial-box, #hotspot-tutorial-box.opened {
+            top: auto !important;
+            bottom: 20px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: 100px !important;  
+            height: 120px !important; 
+            background-size: 100% 100% !important;
+            background-color: transparent !important;
+            border: none !important;
+            position: absolute;
+            z-index: 7 !important;
+        }
+        #hotspot-tutorial-box {
+            background-image: url('images/safe.png') !important;
+        }
+
+        /* 金庫が開いた後の画像切り替え */
+        #hotspot-safe.opened, #hotspot-tutorial-box.opened {
+            background-image: url('images/safe_open.png') !important;
+        }
+
         #hotspot-hollow {
             top: 85px !important;    
             left: 505px !important;   
@@ -237,6 +251,7 @@
             z-index: 5 !important;
         }
 
+        /* 部屋切替アニメーション要素（チュートリアル・本編共通の単一黒丸演出） */
         #transition-circle {
             position: fixed;
             top: 50%;
@@ -251,11 +266,9 @@
             pointer-events: none;
         }
         #transition-circle.expand {
-            transition: transform 1.5s ease-in;
             transform: translate(-50%, -50%) scale(1);
         }
         #transition-circle.fade-out {
-            transition: opacity 2s ease-out;
             opacity: 0;
         }
     </style>
@@ -266,14 +279,19 @@
 
     <div id="game-container">
         <div id="game-screen">
-            <div id="room-north" class="room active"></div>
+            <!-- チュートリアル用部屋 -->
+            <div id="room-tutorial_north" class="room active"></div>
+            <div id="room-tutorial_east" class="room"></div>
+
+            <!-- 本編用部屋 -->
+            <div id="room-north" class="room"></div>
             <div id="room-east" class="room"></div>
             <div id="room-south" class="room"></div>
             <div id="room-west" class="room"></div>
         </div>
 
         <div id="message-area">
-            <span id="message-text">目が覚めると、あなたは薄暗い書斎に閉じ込められていました。</span>
+            <span id="message-text"></span>
         </div>
         <div id="inventory">
             <div class="inventory-slot"></div>
@@ -293,10 +311,49 @@
     </div>
 
     <script>
+        // ==========================================
+        // ゲーム設定
+        // ==========================================
+        const GAME_CONFIG = {
+            // --- 部屋切替アニメーション設定 ---
+            transition: {
+                circleId: 'transition-circle',
+                tutorial: {
+                    expandDuration: 1150, // 暗転（画面が真っ黒になる）までの時間 (ミリ秒)
+                    fadeDuration: 2000    // フェードアウト（画面が明ける）までの時間 (ミリ秒)
+                },
+                main: {
+                    expandDuration: 1150, // チュートリアルと同じ暗転時間 (ミリ秒)
+                    fadeDuration: 2000    // チュートリアルと同じフェードアウト時間 (ミリ秒)
+                }
+            },
+            // --- チュートリアル設定 ---
+            tutorial: {
+                showInInventory: true,
+                messages: {
+                    step1: '【チュートリアル 1/3】右の矢印（→）をクリックして隣の部屋へ移動してみよう！',
+                    step2: '【チュートリアル 2/3】金庫をクリックして「練習用の鍵」を手に入れよう！',
+                    step3: '【チュートリアル 3/3】下欄の「練習用の鍵」をクリックして選択し、扉を開けよう！',
+                    keyGot: '「練習用の鍵」を手に入れた！下欄の鍵を選択し、左の矢印（←）で戻って扉に使おう！',
+                    doorSuccess: 'ガチャリ！扉が開いた！基本操作の習得完了です。本編を開始します……',
+                    doorLocked: '鍵がかかっている。アイテム欄の「練習用の鍵」をクリックして選択してから扉を調べてみよう！'
+                }
+            },
+            // --- 本編設定 ---
+            main: {
+                showInInventory: true,
+                messages: {
+                    start: '目が覚めると、あなたは薄暗い書斎に閉じ込められていました。'
+                }
+            }
+        };
+
         const gameState = {
-            currentRoom: 'north',
+            isTutorial: true,
+            currentRoom: 'tutorial_north',
             inventory: [],
             flags: {
+                tutorialKeyFound: false,
                 keyFound: false,
                 pictureMoved: false,
                 deskOpened: false,
@@ -314,6 +371,25 @@
         };
 
         const rooms = {
+            // --- チュートリアル用部屋 ---
+            tutorial_north: {
+                hotspots: [
+                    { id: 'hotspot-tutorial-door', top: '130px', left: '200px', width: '200px', height: '300px', action: 'examine_tutorial_door', img: 'images/door.png' }
+                ],
+                arrows: [
+                    { id: 'arrow-tutorial-east', direction: 'tutorial_east', style: 'top: calc(50% - 25px); right: 0px;', text: '→' }
+                ]
+            },
+            tutorial_east: {
+                hotspots: [
+                    { id: 'hotspot-tutorial-box', action: 'examine_tutorial_box' }
+                ],
+                arrows: [
+                    { id: 'arrow-tutorial-west', direction: 'tutorial_north', style: 'top: calc(50% - 25px); left: 0px;', text: '←' }
+                ]
+            },
+
+            // --- 本編用部屋 ---
             north: {
                 hotspots: [
                     { id: 'hotspot-door', top: '130px', left: '200px', width: '200px', height: '300px', action: 'examine_door', img: 'images/door.png' },
@@ -355,6 +431,7 @@
         };
 
         const items = {
+            'tutorial_key': { name: '練習用の鍵', img: 'images/safe_key.png' },
             'safe_key': { name: '金庫の鍵', img: 'images/safe_key.png' },
             'light': { name: 'ライト', img: 'images/light.png' },
             'pet_bottle': { name: 'ペットボトル', img: 'images/pet_bottle.png' },
@@ -374,40 +451,14 @@
             messageText.textContent = msg;
         }
 
-        function itemGetAnimation(itemId, hotspotElement) {
-            const itemImgSrc = items[itemId].img;
-            const itemAnimElement = document.createElement('img');
-            itemAnimElement.src = itemImgSrc;
-            itemAnimElement.className = 'item-get-animation';
-            
-            const rect = hotspotElement.getBoundingClientRect();
-            const gameScreenRect = gameScreen.getBoundingClientRect();
-            itemAnimElement.style.left = `${rect.left - gameScreenRect.left + rect.width / 2 - 15}px`; 
-            itemAnimElement.style.top = `${rect.top - gameScreenRect.top + rect.height / 2 - 15}px`;
-
-            const itemIndex = gameState.inventory.indexOf(itemId);
-            const targetSlot = inventorySlots[itemIndex];
-            
-            if (targetSlot) {
-                const targetRect = targetSlot.getBoundingClientRect();
-                itemAnimElement.style.setProperty('--target-x', `${targetRect.left - gameScreenRect.left - parseInt(itemAnimElement.style.left, 10)}px`);
-                itemAnimElement.style.setProperty('--target-y', `${targetRect.top - gameScreenRect.top - parseInt(itemAnimElement.style.top, 10)}px`);
-            }
-
-            gameScreen.appendChild(itemAnimElement);
-
-            itemAnimElement.addEventListener('animationend', () => {
-                itemAnimElement.remove();
-                updateInventoryDisplay(); 
-            });
-        }
-
         function updateInventoryDisplay() {
+            const config = gameState.isTutorial ? GAME_CONFIG.tutorial : GAME_CONFIG.main;
+
             inventorySlots.forEach((slot, index) => {
                 slot.innerHTML = ''; 
                 slot.classList.remove('active'); 
 
-                if (gameState.inventory[index]) {
+                if (config.showInInventory && gameState.inventory[index]) {
                     const item = gameState.inventory[index];
                     const img = document.createElement('img');
                     img.src = items[item].img;
@@ -423,31 +474,22 @@
             });
         }
 
-        function pickUpItem(itemId, hotspotElement = null) {
+        function pickUpItem(itemId) {
             if (gameState.inventory.length < inventorySlots.length) {
                 if (!gameState.inventory.includes(itemId)) { 
                     gameState.inventory.push(itemId);
-                    if (hotspotElement) {
-                        itemGetAnimation(itemId, hotspotElement); 
-                    } else {
-                        updateInventoryDisplay(); 
-                    }
-                    showMessage(`${items[itemId].name}を手に入れた！`);
+                    updateInventoryDisplay(); 
                     return true;
-                } else {
-                    showMessage(`${items[itemId].name}はもう持っている。`);
-                    return false;
                 }
-            } else {
-                showMessage('これ以上アイテムは持てないようだ。');
-                return false;
             }
+            return false;
         }
 
         function changeRoom(newRoomId) {
             if (gameState.isAnimating) return;
             gameState.isAnimating = true;
 
+            const transConfig = gameState.isTutorial ? GAME_CONFIG.transition.tutorial : GAME_CONFIG.transition.main;
             const currentRoomElement = document.getElementById(`room-${gameState.currentRoom}`);
             const newRoomElement = document.getElementById(`room-${newRoomId}`);
             
@@ -456,8 +498,9 @@
                 return;
             }
 
-            const transitionCircle = document.getElementById('transition-circle');
+            const transitionCircle = document.getElementById(GAME_CONFIG.transition.circleId);
 
+            transitionCircle.style.transition = `transform ${transConfig.expandDuration}ms ease-in`;
             transitionCircle.classList.remove('fade-out'); 
             transitionCircle.classList.add('expand');
 
@@ -471,14 +514,30 @@
                 currentRoomElement.querySelectorAll('.hotspot').forEach(hs => hs.remove());
                 currentRoomElement.querySelectorAll('.arrow').forEach(arrow => arrow.remove());
 
+                transitionCircle.style.transition = `opacity ${transConfig.fadeDuration}ms ease-out`;
                 transitionCircle.classList.add('fade-out');
 
                 setTimeout(() => {
                     transitionCircle.classList.remove('expand');
                     gameState.isAnimating = false;
-                }, 2000);
+                    
+                    // チュートリアル中の進行メッセージ制御
+                    if (gameState.isTutorial) {
+                        if (newRoomId === 'tutorial_east') {
+                            if (!gameState.flags.tutorialKeyFound) {
+                                showMessage(GAME_CONFIG.tutorial.messages.step2);
+                            }
+                        } else if (newRoomId === 'tutorial_north') {
+                            if (gameState.inventory.includes('tutorial_key')) {
+                                showMessage(GAME_CONFIG.tutorial.messages.step3);
+                            } else {
+                                showMessage(GAME_CONFIG.tutorial.messages.step1);
+                            }
+                        }
+                    }
+                }, transConfig.fadeDuration);
 
-            }, 1500); 
+            }, transConfig.expandDuration);
         }
 
         function renderRoom(roomId) {
@@ -489,11 +548,16 @@
                 const div = document.createElement('div');
                 div.id = hs.id;
                 div.className = 'hotspot';
-                div.style.top = hs.top;
-                div.style.left = hs.left;
-                div.style.width = hs.width;
-                div.style.height = hs.height;
+                if (hs.top) div.style.top = hs.top;
+                if (hs.left) div.style.left = hs.left;
+                if (hs.width) div.style.width = hs.width;
+                if (hs.height) div.style.height = hs.height;
                 div.dataset.action = hs.action;
+
+                if ((hs.id === 'hotspot-tutorial-box' && gameState.flags.tutorialKeyFound) ||
+                    (hs.id === 'hotspot-safe' && gameState.flags.safeOpened)) {
+                    div.classList.add('opened');
+                }
 
                 if (hs.img) {
                     div.style.backgroundImage = `url('${hs.img}')`;
@@ -525,7 +589,9 @@
 
             if (direction) {
                 changeRoom(direction);
-                showMessage(`あなたは${direction}の壁に移動した。`);
+                if (!gameState.isTutorial) {
+                    showMessage(`あなたは${direction}の壁に移動した。`);
+                }
                 gameState.selectedItem = null; 
                 updateInventoryDisplay();
                 return;
@@ -561,6 +627,34 @@
             const selectedItem = gameState.selectedItem;
 
             switch (action) {
+                // --- チュートリアル用の処理 ---
+                case 'examine_tutorial_box':
+                    if (currentRoomId !== 'tutorial_east') return;
+                    if (!gameState.flags.tutorialKeyFound) {
+                        gameState.flags.tutorialKeyFound = true;
+                        if (targetElement) {
+                            targetElement.classList.add('opened');
+                        }
+                        pickUpItem('tutorial_key');
+                        message = GAME_CONFIG.tutorial.messages.keyGot;
+                    } else {
+                        message = '金庫の中はもう空っぽだ。';
+                    }
+                    break;
+
+                case 'examine_tutorial_door':
+                    if (currentRoomId !== 'tutorial_north') return;
+                    if (selectedItem === 'tutorial_key') {
+                        message = GAME_CONFIG.tutorial.messages.doorSuccess;
+                        setTimeout(() => {
+                            startMainGame();
+                        }, 2000);
+                    } else {
+                        message = GAME_CONFIG.tutorial.messages.doorLocked;
+                    }
+                    break;
+
+                // --- 本編用の処理 ---
                 case 'examine_desk':
                     if (currentRoomId !== 'west') return;
                     if (!gameState.flags.deskOpened) {
@@ -598,13 +692,16 @@
                         });
 
                         rooms.north.hotspots.push({
-                            id: 'hotspot-safe', top: '50px', left: '350px', action: 'examine_safe'
+                            id: 'hotspot-safe', action: 'examine_safe'
                         });
 
                         const safeHotspot = document.createElement('div');
                         safeHotspot.id = 'hotspot-safe';
                         safeHotspot.className = 'hotspot';
                         safeHotspot.dataset.action = 'examine_safe';
+                        if (gameState.flags.safeOpened) {
+                            safeHotspot.classList.add('opened');
+                        }
                         document.getElementById('room-north').appendChild(safeHotspot);
                         
                     } else {
@@ -618,6 +715,9 @@
                         if (selectedItem === 'safe_key') {
                             message = '鍵を使って金庫を開けた！中から「ペットボトル」を手に入れた！';
                             gameState.flags.safeOpened = true;
+                            if (targetElement) {
+                                targetElement.classList.add('opened');
+                            }
                             pickUpItem('pet_bottle'); 
                         } else {
                             message = '頑丈な金庫だ。開けるには鍵が必要そうだ。';
@@ -718,10 +818,21 @@
             gameScreen.style.pointerEvents = 'none';
         }
 
+        // 本編スタート関数
+        function startMainGame() {
+            gameState.isTutorial = false;
+            gameState.inventory = [];
+            gameState.selectedItem = null;
+            updateInventoryDisplay();
+            changeRoom('north');
+            showMessage(GAME_CONFIG.main.messages.start);
+        }
+
+        // ゲーム初期化（チュートリアルから開始）
         function initGame() {
             renderRoom(gameState.currentRoom);
             updateInventoryDisplay(); 
-            showMessage('目が覚めると、あなたは薄暗い書斎に閉じ込められていました。');
+            showMessage(GAME_CONFIG.tutorial.messages.step1);
         }
 
         initGame(); 
